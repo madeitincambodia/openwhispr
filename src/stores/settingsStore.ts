@@ -902,12 +902,22 @@ export const MAX_TRANSLATION_TARGETS = 5;
 
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
   uiLanguage: normalizeUiLanguage(isBrowser ? localStorage.getItem("uiLanguage") : null),
-  useLocalWhisper: readBoolean("useLocalWhisper", false),
+  // [fork] Default to on-device transcription. Upstream defaults to cloud
+  // (OpenAI gpt-4o-mini-transcribe), which would send audio off the machine.
+  useLocalWhisper: readBoolean("useLocalWhisper", true),
   whisperModel: readString("whisperModel", "base"),
-  localTranscriptionProvider: (readString("localTranscriptionProvider", "whisper") === "nvidia"
-    ? "nvidia"
-    : "whisper") as LocalTranscriptionProvider,
-  parakeetModel: readString("parakeetModel", ""),
+  // [fork] Parakeet (sherpa-onnx, CPU/INT8) is the primary engine; upstream
+  // defaults to "whisper". whisper.cpp remains selectable as a fallback.
+  localTranscriptionProvider: (readString("localTranscriptionProvider", "nvidia") === "whisper"
+    ? "whisper"
+    : "nvidia") as LocalTranscriptionProvider,
+  // [fork] English-only specialist: best EN accuracy (5.91% avg WER, Open ASR
+  // Leaderboard) and dictation here is English. parakeet-tdt-0.6b-v3
+  // (multilingual, 25 languages) is also installed — switch in Settings →
+  // Speech-to-Text → NVIDIA if non-English is ever needed.
+  // Pinned explicitly; upstream leaves this "" and relies on ~6 call sites each
+  // hardcoding the tdt id as a fallback.
+  parakeetModel: readString("parakeetModel", "parakeet-unified-en-0.6b"),
   allowOpenAIFallback: readBoolean("allowOpenAIFallback", false),
   allowLocalFallback: readBoolean("allowLocalFallback", false),
   fallbackWhisperModel: readString("fallbackWhisperModel", "base"),
@@ -939,8 +949,12 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   autoGenerateNoteTitle: readBoolean("autoGenerateNoteTitle", true),
   useCleanupModel: readBoolean("useCleanupModel", true),
   useDictationAgent: readBoolean("useDictationAgent", true),
-  cleanupModel: readString("cleanupModel", ""),
-  cleanupProvider: readString("cleanupProvider", "openai"),
+  // [fork] Fully-local cleanup — no text leaves the machine, no API cost.
+  // Cleanup is punctuation, filler-word removal and light formatting; a small
+  // local GGUF via llama.cpp is sufficient and keeps the whole pipeline offline.
+  // Upstream defaults to provider "openai" with no model.
+  cleanupModel: readString("cleanupModel", "llama-3.2-3b-instruct-q4_k_m"),
+  cleanupProvider: readString("cleanupProvider", "local"),
 
   // Secrets hydrate from main process in initializeSettings, never from localStorage.
   openaiApiKey: "",
@@ -1065,9 +1079,13 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   isSignedIn: readBoolean("isSignedIn", false),
 
   transcriptionMode: (() => {
-    const v = readString("transcriptionMode", "openwhispr");
+    // [fork] On-device transcription. Upstream defaults to "openwhispr" (hosted).
+    // This also gates the UI: SettingsPage only renders the local model picker
+    // (and its NVIDIA/Parakeet tab) when this is "local" — see SettingsPage.tsx
+    // ~:376. Leaving it on "openwhispr" hides the Parakeet download entirely.
+    const v = readString("transcriptionMode", "local");
     if (v === "openwhispr" || v === "providers" || v === "local" || v === "self-hosted") return v;
-    return "openwhispr" as InferenceMode;
+    return "local" as InferenceMode;
   })(),
   remoteTranscriptionType: (() => {
     const v = readString("remoteTranscriptionType", "lan");
@@ -1076,7 +1094,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   remoteTranscriptionUrl: readString("remoteTranscriptionUrl", ""),
   remoteTranscriptionModel: readString("remoteTranscriptionModel", ""),
   cleanupMode: (() => {
-    const v = readString("cleanupMode", "openwhispr");
+    // [fork] "local" = on-device llama.cpp. Upstream defaults to "openwhispr",
+    // which routes dictated text through OpenWhispr's hosted cloud when signed
+    // in. Nothing in this fork's dictation path touches the network.
+    const v = readString("cleanupMode", "local");
     if (
       v === "openwhispr" ||
       v === "providers" ||

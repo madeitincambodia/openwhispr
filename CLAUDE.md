@@ -1,5 +1,26 @@
 # OpenWhispr Technical Reference for AI Assistants
 
+> ## ⚠️ THIS IS A FORK — READ [`FORK.md`](FORK.md) FIRST
+>
+> Paul's personal push-to-talk fork. **Read `FORK.md` before changing anything**, in
+> particular before touching transcription engines, AI providers, or build flags.
+>
+> Non-negotiables (full rationale in `FORK.md`):
+> - **No CUDA, ever.** Target machine is AMD Radeon 780M integrated — no NVIDIA GPU.
+>   Never set `WHISPER_CUDA_ENABLED`/`WHISPER_VULKAN_ENABLED` or download GPU binaries.
+> - **Transcription stays on-device.** Defaults are Parakeet (sherpa-onnx, CPU/INT8);
+>   upstream's cloud-OpenAI default would send audio off the machine.
+> - **Anthropic is the only cleanup provider**, `claude-haiku-4-5`, BYOK direct —
+>   *not* upstream's hosted-`openwhispr` cleanup route.
+> - **Never print a credential value** in any tool output.
+>
+> Fork divergence is defaults-only, in `src/stores/settingsStore.ts`, tagged `// [fork]`.
+> Note: **`npm run dev` is broken here** (a `concurrently` cwd bug) — `FORK.md` has the
+> workaround.
+>
+> Everything below this line is upstream's own reference. Keep it that way so
+> `git merge upstream/main` stays clean.
+
 This document provides comprehensive technical details about the OpenWhispr project architecture for AI assistants working on the codebase.
 
 ## Project Overview

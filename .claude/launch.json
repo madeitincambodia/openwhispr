@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Whispr: Renderer (Vite)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:renderer"],
+      "port": 5183
+    },
+    {
+      "name": "Whispr: App (Electron)",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "cross-env",
+        "NODE_ENV=development",
+        "node",
+        "scripts/run-electron.js",
+        "--dev"
+      ],
+      "port": 5183
+    },
+    {
+      "name": "Whispr: Stop All",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-NoProfile", "-File", "scripts/whispr-stop.ps1"],
+      "port": 5183
+    }
+  ]
+}
