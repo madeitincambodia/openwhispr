@@ -947,12 +947,18 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   assemblyAiStreaming: readBoolean("assemblyAiStreaming", true),
 
   autoGenerateNoteTitle: readBoolean("autoGenerateNoteTitle", true),
-  useCleanupModel: readBoolean("useCleanupModel", true),
+  // [fork] Cleanup off by default — it costs ~5.3s per dictation for marginal
+  // gain. llamaServer.js kills the server after IDLE_TIMEOUT_MS (5 min), and
+  // nothing re-warms it, so intermittent dictation pays a full cold model load
+  // (spawn + GGUF load + 557-token system-prompt prefill) on nearly every run.
+  // Cleanup also blocks the paste entirely (audioManager.js processWithOpenWhisprCloud),
+  // so that cost is fully user-visible. Parakeet already punctuates and
+  // capitalises well enough. Measured 2026-07-20: ~7.7s with cleanup vs ~2.4s
+  // without. Re-enable in Settings → AI Models if the tradeoff changes.
+  useCleanupModel: readBoolean("useCleanupModel", false),
   useDictationAgent: readBoolean("useDictationAgent", true),
-  // [fork] Fully-local cleanup — no text leaves the machine, no API cost.
-  // Cleanup is punctuation, filler-word removal and light formatting; a small
-  // local GGUF via llama.cpp is sufficient and keeps the whole pipeline offline.
-  // Upstream defaults to provider "openai" with no model.
+  // [fork] If cleanup is re-enabled, keep it fully local — no text leaves the
+  // machine, no API cost. Upstream defaults to provider "openai" with no model.
   cleanupModel: readString("cleanupModel", "llama-3.2-3b-instruct-q4_k_m"),
   cleanupProvider: readString("cleanupProvider", "local"),
 

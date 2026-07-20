@@ -788,7 +788,13 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         }
 
         // Non-commit sessions stop concurrently with the decode below.
-        const previewStop = this._streamingCommitActive ? await previewStopPromise : null;
+        // [fork] Direct PCM capture must also await it — cleanupPreview is what posts
+        // "stop" to the worklet and waits for the final partial chunk. Skipping the await
+        // clips the last ~50ms off the transcript.
+        const previewStop =
+          this._streamingCommitActive || this._pcmDirectCaptureActive
+            ? await previewStopPromise
+            : null;
         this._streamingCommitActive = false;
 
         await this.processAudio(audioBlob, {
@@ -813,8 +819,20 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       const isNvidia = localTranscriptionProvider === "nvidia";
       // Online models stream+commit during capture, so PCM runs even with preview off.
       const streamingCommit = useLocalWhisper && isNvidia && isOnlineParakeetModel(parakeetModel);
+      // [fork] Offline Parakeet: capture the worklet's PCM so the final transcript can
+      // skip the webm->wav ffmpeg conversion entirely. The worklet already emits exactly
+      // what sherpa-onnx wants (16 kHz mono Int16), so the conversion is pure waste — and
+      // it was measured at 1697ms of a 2243ms transcription on 2026-07-20, versus 140ms
+      // for the same convert run standalone. See FORK.md.
+      const pcmDirectCapture =
+        useLocalWhisper && isNvidia && !isOnlineParakeetModel(parakeetModel);
+      // Preview/streaming own the preview IPC session; direct capture must not start one,
+      // or main spins up its chunked-transcription pipeline for a preview nobody asked for.
+      const usesPreviewSession = showTranscriptionPreview || streamingCommit;
       this._streamingCommitActive = false;
-      if (useLocalWhisper && (showTranscriptionPreview || streamingCommit)) {
+      this._pcmDirectCaptureActive = false;
+      this._capturedPcmChunks = [];
+      if (useLocalWhisper && (usesPreviewSession || pcmDirectCapture)) {
         try {
           this._previewAudioContext = new AudioContext({ sampleRate: 16000 });
           this._previewSource = this._previewAudioContext.createMediaStreamSource(micStream);
@@ -829,22 +847,30 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
               this._previewFlushResolve?.();
               return;
             }
-            window.electronAPI?.sendDictationPreviewAudio?.(event.data);
+            // [fork] Buffers arrive transferred, so this keeps the only live reference.
+            if (this._pcmDirectCaptureActive) this._capturedPcmChunks.push(event.data);
+            if (usesPreviewSession) window.electronAPI?.sendDictationPreviewAudio?.(event.data);
           };
           this._previewSource.connect(this._previewProcessor);
 
-          const provider = isNvidia ? "nvidia" : "whisper";
-          const model = isNvidia ? parakeetModel : whisperModel;
-          const language = getBaseLanguageCode(getSettings().preferredLanguage);
-          window.electronAPI?.startDictationPreview?.({
-            provider,
-            model,
-            language,
-            display: showTranscriptionPreview,
-          });
+          if (usesPreviewSession) {
+            const provider = isNvidia ? "nvidia" : "whisper";
+            const model = isNvidia ? parakeetModel : whisperModel;
+            const language = getBaseLanguageCode(getSettings().preferredLanguage);
+            window.electronAPI?.startDictationPreview?.({
+              provider,
+              model,
+              language,
+              display: showTranscriptionPreview,
+            });
+          }
           this._streamingCommitActive = streamingCommit;
+          this._pcmDirectCaptureActive = pcmDirectCapture;
+          this._previewSessionActive = usesPreviewSession;
         } catch (e) {
           logger.warn("Preview worklet setup failed", { error: e.message }, "audio");
+          // Falls through to the webm+ffmpeg path, which is still fully intact.
+          this._pcmDirectCaptureActive = false;
         }
       }
 
@@ -1198,20 +1224,30 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         timings.transcriptionProcessingDurationMs = 0;
         result = { success: true, text: streamedText };
       } else {
-        const arrayBuffer = await audioBlob.arrayBuffer();
+        // [fork] Prefer the worklet's PCM: it is already 16 kHz mono Int16, which lets
+        // main skip the ffmpeg spawn and its four synchronous temp-file ops entirely.
+        // Empty capture (worklet setup failed, or a provider that does not capture)
+        // falls back to the original webm path untouched.
+        const pcmBuffer = this._takeCapturedPcm();
+        const arrayBuffer = pcmBuffer ?? (await audioBlob.arrayBuffer());
+        const usingPcm = pcmBuffer !== null;
 
         logger.debug(
           "Parakeet transcription starting",
           {
-            audioFormat: audioBlob.type,
-            audioSizeBytes: audioBlob.size,
+            audioFormat: usingPcm ? "pcm16/16000" : audioBlob.type,
+            audioSizeBytes: usingPcm ? arrayBuffer.byteLength : audioBlob.size,
+            skippedFfmpeg: usingPcm,
             model,
           },
           "performance"
         );
 
         const transcriptionStart = performance.now();
-        result = await window.electronAPI.transcribeLocalParakeet(arrayBuffer, { model });
+        result = await window.electronAPI.transcribeLocalParakeet(arrayBuffer, {
+          model,
+          ...(usingPcm ? { format: "pcm16", sampleRate: 16000 } : {}),
+        });
         timings.transcriptionProcessingDurationMs = Math.round(
           performance.now() - transcriptionStart
         );
@@ -3697,6 +3733,38 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     );
   }
 
+  /**
+   * [fork] Drain the PCM captured by the worklet during an offline-Parakeet recording.
+   * Returns a single ArrayBuffer of 16 kHz mono Int16 samples, or null when nothing
+   * usable was captured — in which case callers fall back to the webm+ffmpeg path.
+   * Always clears the buffer so a failed run cannot leak into the next recording.
+   */
+  _takeCapturedPcm() {
+    const chunks = this._capturedPcmChunks || [];
+    this._capturedPcmChunks = [];
+    const wasCapturing = this._pcmDirectCaptureActive;
+    this._pcmDirectCaptureActive = false;
+
+    if (!wasCapturing || chunks.length === 0) return null;
+
+    const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+    // Guard against a capture so short it cannot contain speech (< 100ms @ 16kHz
+    // mono Int16 = 3200 bytes). The webm path has its own degenerate-recording
+    // check; this is the PCM equivalent.
+    if (totalBytes < 3200) {
+      logger.warn("Captured PCM too short, falling back to webm", { totalBytes }, "audio");
+      return null;
+    }
+
+    const merged = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      merged.set(new Uint8Array(chunk), offset);
+      offset += chunk.byteLength;
+    }
+    return merged.buffer;
+  }
+
   async cleanupPreview(options = {}) {
     const { dismiss = false, showCleanup = false } = options;
 
@@ -3725,6 +3793,10 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     }
     source?.disconnect();
     audioContext?.close().catch(() => {});
+    // [fork] Direct PCM capture runs the worklet without a preview session, so there is
+    // nothing on the main side to dismiss or stop.
+    if (!this._previewSessionActive) return null;
+    this._previewSessionActive = false;
     if (dismiss) {
       window.electronAPI?.dismissDictationPreview?.();
       return null;

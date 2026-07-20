@@ -22,13 +22,26 @@
 machine. `nvidia-smi` returns nothing; the app logs `[gpu] No NVIDIA GPUs detected`.
 
 Specifically, do **not**:
-- set `WHISPER_CUDA_ENABLED=true` or `WHISPER_VULKAN_ENABLED=true` in `.env`
-- download the CUDA/Vulkan whisper variants via `download-cuda-whisper-binary`
-  (`src/helpers/whisperCudaManager.js`, `src/helpers/whisperVulkanManager.js`)
-- wire DirectML/Vulkan acceleration for the 780M — not worth the complexity for
-  short push-to-talk clips
+- set `WHISPER_CUDA_ENABLED=true` in `.env`
+- download the CUDA whisper variants via `download-cuda-whisper-binary`
+  (`src/helpers/whisperCudaManager.js`)
 
-Current state is CPU-only by construction:
+### ⚠️ Vulkan is NOT banned — the CUDA rule does not extend to it
+
+An earlier draft of this file lumped Vulkan in with CUDA. **That was wrong**, and the
+running app already contradicts it. Vulkan is vendor-neutral and is precisely the right
+acceleration path for a Radeon 780M; CUDA is NVIDIA-proprietary and genuinely unusable
+here. Only the CUDA ban is load-bearing.
+
+Both profiles (`.env` in `%APPDATA%\OpenWhispr-development` and `%APPDATA%\open-whispr`)
+set `LLAMA_VULKAN_ENABLED=true` and `WHISPER_VULKAN_ENABLED=true`, and it works — the
+2026-07-20 logs show `llama-server-vulkan.exe` spawning cleanly and enumerating
+`Vulkan0 : AMD Radeon 780M Graphics (78885 MiB, 74940 MiB free)`.
+
+The two checklist items at the bottom of this file that assert Vulkan binaries must be
+absent are stale for the same reason. Leave Vulkan enabled.
+
+Current state of the *transcription* path is CPU-only by construction:
 - **Parakeet has no GPU path at all.** `scripts/download-sherpa-onnx.js` pins
   sherpa-onnx v1.13.4 and fetches only `*-shared` CPU builds. Nothing to disable.
 - **Whisper is on the CPU binary.** `resources/bin/whisper-server-win32-x64.exe`
@@ -40,10 +53,10 @@ Current state is CPU-only by construction:
 
 ## What changed from upstream, and why
 
-All divergence so far is **defaults only**, in
-[`src/stores/settingsStore.ts`](src/stores/settingsStore.ts), each tagged `// [fork]`.
-No architectural changes. This is deliberate — it keeps `git merge upstream/main`
-nearly conflict-free.
+Divergence is **defaults only** in
+[`src/stores/settingsStore.ts`](src/stores/settingsStore.ts), each tagged `// [fork]`,
+**plus one deliberate code change** — the ffmpeg bypass documented below. Keep it that
+way: it is what makes `git merge upstream/main` nearly conflict-free.
 
 | Setting | Upstream | This fork | Why |
 |---|---|---|---|
@@ -54,6 +67,71 @@ nearly conflict-free.
 | `cleanupModel` | `""` | `"llama-3.2-3b-instruct-q4_k_m"` | Cleanup = punctuation, filler removal, light formatting. A small local GGUF is plenty; the 3B is chosen over Gemma-4-E4B for latency (push-to-talk feel). |
 | `cleanupMode` | `"openwhispr"` | `"local"` | **Privacy fix.** Upstream routes dictated text through OpenWhispr's *hosted cloud* when signed in (see the `isSignedIn && cleanupMode === "openwhispr" && cleanupCloudMode === "openwhispr"` check in `settingsStore.ts`). |
 | `transcriptionMode` | `"openwhispr"` | `"local"` | On-device. **Also gates the UI** — `SettingsPage.tsx` ~:376 only renders the local model picker (and its NVIDIA/Parakeet tab) when this is `"local"`. Leaving it hosted hides the Parakeet download entirely. |
+| `useCleanupModel` | `true` | `false` | **Latency.** Cleanup cost ~5.3s per dictation for marginal gain — see below. Parakeet already punctuates and capitalises well. |
+
+### Why cleanup is off (measured 2026-07-20)
+
+The packaged app was taking **6–7s** per dictation. Instrumented breakdown from
+`%APPDATA%\open-whispr\logs\`: transcription 2,243ms, cleanup **~5,300ms**, paste 163ms.
+
+Cleanup is slow for a structural reason, not a model-choice one — swapping
+`llama-3.2-3b` for `gemma-4-e4b` barely moved the number, because the time is not
+inference:
+
+- `llamaServer.js:21` sets `IDLE_TIMEOUT_MS = 5 * 60 * 1000`. Five minutes after the
+  last inference the server is killed and the model unloaded.
+- Pre-warming happens **only at app start** (`main.js:1017`). There is no re-warm hook.
+- So intermittent dictation — the normal pattern — pays a full cold load on nearly
+  every run: process spawn, GGUF read, weight load, 500ms-grid readiness poll, and a
+  re-prefill of the 557-token cleanup system prompt whose KV cache died with the process.
+- Cleanup **blocks the paste entirely** (`audioManager.js` `processWithOpenWhisprCloud`
+  returns only after reasoning completes; `useAudioRecording.js:164-170` awaits it), so
+  the whole cost is user-visible.
+
+If cleanup is ever wanted back, the fix is to raise or disable `IDLE_TIMEOUT_MS` and
+re-warm on record-start — **not** to pick a smaller model. That would be the first fork
+change outside `settingsStore.ts`, so weigh the merge cost.
+
+### Code change: ffmpeg bypass on the offline-Parakeet dictation path
+
+**The only non-defaults divergence.** Measured 2026-07-20 in the packaged app: a dictation
+spent **1,697ms of its 2,243ms transcription inside a single ffmpeg subprocess**, converting
+webm/opus → 16 kHz mono WAV. Parakeet's own inference was only 494ms (dev measured 420ms —
+ASR was never the problem).
+
+That conversion is pure waste. The renderer's AudioWorklet already produces **16 kHz mono
+Int16** — precisely what sherpa-onnx consumes — and `parakeetServer._ensureWav` short-circuits
+without touching ffmpeg when handed a 16 kHz mono WAV. The old path decoded audio the renderer
+already had, via an 83 MB subprocess and four synchronous temp-file operations.
+
+Standalone, that same conversion runs in a steady **138–141ms**. In-app it ranged **125ms to
+7,125ms** across six dictations. Root cause of the *variance* was never confirmed — Defender
+real-time protection is off on this machine, so AV scanning is ruled out; the leading
+hypothesis is main-process event-loop blocking around the synchronous `writeFileSync`/
+`readFileSync` in `_ensureWav`. Bypassing the conversion sidesteps the question.
+
+**What changed** (all additive, no signature changes):
+
+| File | Change |
+|---|---|
+| `audioManager.js` (worklet setup) | Run the PCM worklet for offline Parakeet too, not just preview/streaming. Guarded so it does **not** start a preview IPC session — that would spin up main's chunked-transcription pipeline for a preview nobody asked for. |
+| `audioManager.js` (`onstop`) | Await the worklet flush for direct capture. Without this the final partial chunk is dropped and the last ~50ms is clipped. |
+| `audioManager.js` (`_takeCapturedPcm`) | Concatenate chunks; return `null` below 3,200 bytes (100ms) so short captures fall back. |
+| `audioManager.js` (`cleanupPreview`) | Skip `stopDictationPreview` when no preview session was started. |
+| `parakeet.js` | On `options.format === "pcm16"`, wrap with `pcm16ToWav` (pure JS, no I/O) before `serverManager.transcribe`. |
+
+**ffmpeg is NOT removed** — it stays load-bearing for whisper.cpp (`whisperServer.js`,
+`whisper.js`), file-upload transcription, `splitAudioFile`, diarization, and URL audio
+download. `_ensureWav` also stays, since `transcribeLocalParakeet` has five main-process
+call sites and some pass arbitrary encoded audio (mp3/m4a). This is a bypass for **one hot
+path**, with automatic fallback to the original webm path if worklet setup fails.
+
+Guarded by [`test/helpers/parakeetPcmDirect.test.js`](test/helpers/parakeetPcmDirect.test.js).
+If those break, the path silently reverts to ffmpeg and the regression returns.
+
+**On merge conflicts:** `audioManager.js` is an upstream-churn file. If upstream reworks the
+worklet or `processWithLocalParakeet`, re-derive the bypass rather than force-resolving —
+the contract that matters is only "hand `_ensureWav` a 16 kHz mono WAV".
 
 ### Defaults only bind a fresh profile
 
@@ -192,8 +270,10 @@ git merge upstream/main                        # or: git rebase upstream/main
 
 **After every merge, re-verify:**
 - [ ] `npm run typecheck` passes
-- [ ] No CUDA/Vulkan binaries in `resources/bin/` (`ls resources/bin | grep -iE "cuda|vulkan"` → empty)
-- [ ] `WHISPER_CUDA_ENABLED` / `WHISPER_VULKAN_ENABLED` absent from `.env`
+- [ ] No CUDA binaries in `resources/bin/` (`ls resources/bin | grep -i cuda` → empty).
+      Vulkan binaries are expected and correct — do not remove them.
+- [ ] `WHISPER_CUDA_ENABLED` absent from `.env`. `LLAMA_VULKAN_ENABLED` /
+      `WHISPER_VULKAN_ENABLED` may be `true` — that is the AMD acceleration path.
 - [ ] Cleanup still points at Anthropic, not `openwhispr` or `openai`
 - [ ] `useLocalWhisper` still `true` (upstream may reintroduce the cloud default)
 - [ ] `git status` never shows `.env`
@@ -342,6 +422,33 @@ Already built in — **Settings → General → Startup → "Launch at login"**
 > dictation overlay, so left unpatched. The correct Windows approach is
 > `args: ['--hidden']` + handling that flag at startup — that would be the first
 > fork change outside `settingsStore.ts`, so weigh the merge cost first.
+
+### ⚠️ Never use an Alt key as the dictation hotkey (Windows)
+
+**Symptom:** dictation works perfectly — correct transcript, `Paste completed` logged, sane
+`pasteMs` — but the text never appears in the target app. It is sitting in the clipboard.
+Manual Ctrl+V works. Nothing in the logs looks wrong.
+
+**Cause:** `DICTATION_KEY=RightAlt`. Two compounding Windows behaviours:
+
+1. A **standalone Alt press-and-release activates the focused window's menu bar**. On
+   release, Notepad (and most Win32 apps) move focus off the text area, so the Ctrl+V the
+   app injects a moment later goes to the menu and is swallowed.
+2. **RightAlt is AltGr on many layouts** (= Ctrl+Alt). If Windows still considers it
+   logically down, the injected Ctrl+V arrives as Ctrl+Alt+V, which is not paste.
+
+**Fix:** pick a hotkey with no Alt in it. `F8` is confirmed working (2026-07-20); the fork
+default `Ctrl+Win` is also fine.
+
+**Why this hid for so long:** before the ffmpeg bypass, paste fired ~7.7s after key release
+— long enough that the user would typically click back into the target window, which clears
+the menu-bar state. At ~1s there is no time to, so the speedup made a latent bug reliably
+visible. Do not misread this as a regression in the PCM path; the paste tier and `pasteMs`
+(141–209ms) are unchanged from before.
+
+**Relevant limitation:** the app has **no focus-restore logic at all** — no capture of the
+previous foreground window, no restore before paste. It relies entirely on the target window
+holding focus. If a non-Alt hotkey ever shows the same symptom, that is the thing to build.
 
 ### Installed app uses a different profile from dev
 

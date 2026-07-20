@@ -12,6 +12,7 @@ const {
 } = require("./downloadUtils");
 const ParakeetServerManager = require("./parakeetServer");
 const { getModelsDirForService } = require("./modelDirUtils");
+const { pcm16ToWav } = require("../utils/audioUtils");
 
 const modelRegistryData = require("../models/modelRegistryData.json");
 const { getModelRuntime, REQUIRED_MODEL_FILES } = require("./parakeetModelInfo");
@@ -231,6 +232,17 @@ class ParakeetManager {
 
     if (!audioBuffer || audioBuffer.length === 0) {
       throw new Error("Audio buffer is empty - no audio data received");
+    }
+
+    // [fork] Raw PCM from the renderer worklet: wrap in a WAV header (pure JS, no I/O)
+    // so parakeetServer._ensureWav short-circuits on the 16kHz-mono check instead of
+    // spawning ffmpeg. Every other caller still passes encoded audio and is unaffected.
+    if (options.format === "pcm16") {
+      audioBuffer = pcm16ToWav(audioBuffer, options.sampleRate || 16000, 1);
+      debugLogger.logSTTPipeline("transcribeLocalParakeet - pcm16 wrapped, ffmpeg skipped", {
+        wavBytes: audioBuffer.length,
+        sampleRate: options.sampleRate || 16000,
+      });
     }
 
     debugLogger.logSTTPipeline("transcribeLocalParakeet - processing", {
