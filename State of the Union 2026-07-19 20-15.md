@@ -31,8 +31,7 @@
 - `D:\ClaudeCode\launcher\groups.json` — `Whispr` group (id `whispr`) referencing those 3. Gitignored user-state, so it lives on this machine only. Written with Paul's explicit approval.
 
 ## Open questions / blockers
-- **`launcher/routines.json` is modified but UNCOMMITTED.** The `launcher` repo also has unrelated in-flight work from another session — `server/main.py`, `web/app.js`, `web/index.html`, `web/style.css`, untracked `server/skills.py`. **Commit `routines.json` alone**; do not sweep the rest in. Paul hasn't decided yet.
-- `launcher/routines.json.bak` + `launcher/groups.json.bak` left as safety copies — delete once the Command Centre renders the Whispr group correctly.
+- ~~launcher/routines.json uncommitted~~ — **DONE.** Committed as `b100092` ("registry: add OpenWhispr routines", 83 insertions, `routines.json` only) by a concurrent session and already pushed. `.bak` files cleaned up too. Nothing outstanding in the launcher repo for this project; the `web/*` changes still open there belong to other work.
 - Cleanup model **actually active is `gemma-4-e4b` (5GB, 746ms)**, not the configured `llama-3.2-3b`. localStorage beats defaults. Switching may get round-trip under 1s — untested.
 - History panel never spot-checked (upstream SQLite `transcriptions` table).
 
@@ -45,11 +44,10 @@
 - **No version/CHANGELOG bump** — version tracks upstream; bumping would conflict on the files upstream churns most.
 
 ## Next steps (pick up here)
-1. **Verify the launcher.** Open the Command Centre, confirm the `Whispr` group shows all 3 routines and that "Whispr: Renderer (Vite)" then "Whispr: App (Electron)" actually launch the app. Then delete the two `.bak` files.
-2. **Commit the registry** — `cd D:\ClaudeCode\launcher && git add routines.json && git commit` (that file ONLY — see blockers).
-3. Switch cleanup model to `llama-3.2-3b-instruct-q4_k_m` in Settings → AI Models → Language Models; measure round-trip vs the 1169ms / 746ms baseline.
-4. Spot-check the history panel lists past dictations.
-5. Consider disabling the auto-started `llama-server` if local cleanup is ever turned off — it holds RAM/CPU for nothing.
+1. **Verify the launcher.** Open the Command Centre, confirm the `Whispr` group shows all 3 routines and that "Whispr: Renderer (Vite)" then "Whispr: App (Electron)" actually launch the app. (Registry is committed + pushed; this is a functional check only.)
+2. Switch cleanup model to `llama-3.2-3b-instruct-q4_k_m` in Settings → AI Models → Language Models; measure round-trip vs the 1169ms / 746ms baseline.
+3. Spot-check the history panel lists past dictations.
+4. Consider disabling the auto-started `llama-server` if local cleanup is ever turned off — it holds RAM/CPU for nothing.
 
 **Nothing is broken.** The app works, is installed, is documented, and is pushed. Everything above is polish.
 
