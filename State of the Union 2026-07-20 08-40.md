@@ -1,4 +1,4 @@
-# State of the Union — 2026-07-19 20:15
+# State of the Union — 2026-07-20 08:40
 
 ## Project
 - **Name:** open-whispr (fork of OpenWhispr/openwhispr)
@@ -6,8 +6,8 @@
 - **Goal:** Personal push-to-talk dictation tool replacing Willow/Genspark Speechly. Hold `Ctrl+Win`, speak, release → cleaned text pasted at cursor. Fully on-device.
 
 ## Phase & Status
-- **Current phase:** Setup complete — in daily use
-- **Status:** Working end-to-end. Verified by Paul in Notepad + Chrome.
+- **Current phase:** Setup complete — **awaiting install of the packaged app**
+- **Status:** Working end-to-end in dev. Verified by Paul in Notepad + Chrome. Installer built but **not yet installed**.
 
 ## What we accomplished this session
 - Forked + cloned; `origin` → madeitincambodia/openwhispr, `upstream` → OpenWhispr/openwhispr
@@ -32,7 +32,8 @@
 
 ## Open questions / blockers
 - ~~launcher/routines.json uncommitted~~ — **DONE.** Committed as `b100092` ("registry: add OpenWhispr routines", 83 insertions, `routines.json` only) by a concurrent session and already pushed. `.bak` files cleaned up too. Nothing outstanding in the launcher repo for this project; the `web/*` changes still open there belong to other work.
-- Cleanup model **actually active is `gemma-4-e4b` (5GB, 746ms)**, not the configured `llama-3.2-3b`. localStorage beats defaults. Switching may get round-trip under 1s — untested.
+- Cleanup model **actually active in DEV is `gemma-4-e4b` (5GB, 746ms)**, not the configured `llama-3.2-3b` — localStorage beats defaults. The **installed** app gets `llama-3.2-3b` automatically (fresh profile). Latency gain untested.
+- **`openAsHidden` is macOS-only** — upstream's autostart handler (`ipcHandlers.js:2841`) passes it with a "Start minimized to tray" comment, but Windows ignores it, so the panel appears at login. Left unpatched; the Windows fix is `args: ['--hidden']` + startup handling, which would be the first fork change outside `settingsStore.ts`.
 - History panel never spot-checked (upstream SQLite `transcriptions` table).
 
 ## Decisions made
@@ -44,18 +45,20 @@
 - **No version/CHANGELOG bump** — version tracks upstream; bumping would conflict on the files upstream churns most.
 
 ## Next steps (pick up here)
-1. **Verify the launcher.** Open the Command Centre, confirm the `Whispr` group shows all 3 routines and that "Whispr: Renderer (Vite)" then "Whispr: App (Electron)" actually launch the app. (Registry is committed + pushed; this is a functional check only.)
-2. Switch cleanup model to `llama-3.2-3b-instruct-q4_k_m` in Settings → AI Models → Language Models; measure round-trip vs the 1169ms / 746ms baseline.
-3. Spot-check the history panel lists past dictations.
-4. Consider disabling the auto-started `llama-server` if local cleanup is ever turned off — it holds RAM/CPU for nothing.
+1. **Install the app** — run `dist\OpenWhispr Setup 1.7.6.exe` (per-user, no admin; SmartScreen → More info → Run anyway). Click through onboarding, re-set hotkey to `Ctrl+Win`. **No model re-download** — they live in `~/.cache/openwhispr/`, outside userData.
+2. **Enable startup** — Settings → General → Startup → "Launch at login". Reboot and confirm `Ctrl+Win` still dictates. Expect the panel to appear at login (`openAsHidden` is macOS-only — see blockers).
+3. **Measure the installed app's cleanup latency.** It gets `llama-3.2-3b` automatically (fresh profile ⇒ fork defaults bind); dev is stuck on the 5GB `gemma-4-e4b` at 746ms. Compare against the 1169ms round-trip baseline.
+4. Spot-check the history panel lists past dictations.
+5. Once the installed app is confirmed good, stop using dev mode — the `Whispr:` launcher routines are dev-only.
 
-**Nothing is broken.** The app works, is installed, is documented, and is pushed. Everything above is polish.
+**Nothing is broken.** The app works in dev, is documented, and is pushed. Everything above is finishing the move to the packaged build.
 
 ## Context to reload
 - **NO CUDA, EVER.** AMD Radeon 780M integrated only. Never set `WHISPER_CUDA_ENABLED`/`WHISPER_VULKAN_ENABLED`, never download GPU whisper variants. Parakeet has no GPU path by construction.
 - **`npm run dev` is BROKEN** — `concurrently` spawns children with the wrong cwd (fails in Git-Bash *and* cmd). Run Vite and Electron separately; see QUICKSTART.md.
 - **`npm run build:win` FAILS WHILE EXITING 0** — Azure Trusted Signing needs a .NET SDK that isn't installed. Always check `ls dist/*.exe`, never the exit code. Use `electron-builder.unsigned-win.json`.
-- **Defaults only bind a fresh profile.** Everything reads localStorage first — changing a default does nothing to an existing profile. This bit us twice.
+- **Defaults only bind a fresh profile.** Everything reads localStorage first — changing a default does nothing to an existing profile. This bit us twice, then worked in our favour: the installed app's empty profile picks up all the fork defaults correctly.
+- **Installed ≠ dev profile.** `%APPDATA%\OpenWhispr` (packaged) vs `%APPDATA%\OpenWhispr-development` (dev). Settings and secrets do NOT carry over; **models do** (`~/.cache/openwhispr/`, outside userData — 1.3GB Parakeet + 7GB GGUF).
 - **Two separate model pickers.** Transcription models (Parakeet → `parakeet-models/`) vs AI models (GGUF → `models/`). Downloading from the wrong one cost 6.9GB.
 - `transcriptionMode` must be `"local"` or the local model picker (and its NVIDIA tab) is **hidden entirely** — `SettingsPage.tsx` ~:376.
 - **Never print a credential value** — trips a safety filter that freezes local execution tools for the session. Use `grep -c`, never `cat`.

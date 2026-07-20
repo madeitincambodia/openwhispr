@@ -332,8 +332,28 @@ Fixing that needs a real code-signing certificate.
 ### Launch at login / background operation
 
 Already built in — **Settings → General → Startup → "Launch at login"**
-(`src/components/SettingsPage.tsx:2708`). Upstream also handles tray/background
-operation; no fork code required.
+(`src/components/SettingsPage.tsx:2708` → IPC `set-auto-start-enabled`,
+`src/helpers/ipcHandlers.js:2841`). No fork code required.
+
+> ⚠️ **Upstream bug — `openAsHidden` does nothing on Windows.** The handler passes
+> `app.setLoginItemSettings({openAtLogin: enabled, openAsHidden: true})` with the
+> comment *"Start minimized to tray"*, but `openAsHidden` is **macOS-only** in
+> Electron. On Windows the app starts with its panel visible. Tolerable for a
+> dictation overlay, so left unpatched. The correct Windows approach is
+> `args: ['--hidden']` + handling that flag at startup — that would be the first
+> fork change outside `settingsStore.ts`, so weigh the merge cost first.
+
+### Installed app uses a different profile from dev
+
+`%APPDATA%\OpenWhispr` (packaged, from `productName`) vs
+`%APPDATA%\OpenWhispr-development` (dev). Settings and encrypted secrets do **not**
+carry over; **models do** — they live in `~/.cache/openwhispr/`, outside userData.
+
+This is why the installed app picks up `llama-3.2-3b` for cleanup while the dev
+profile stays on `gemma-4-e4b`: a fresh localStorage lets the `// [fork]` defaults
+bind, whereas the dev profile's stored values were written before those defaults
+existed. Same mechanism as the "defaults only bind a fresh profile" warning above —
+here it works in our favour.
 
 ---
 

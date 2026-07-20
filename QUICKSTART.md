@@ -7,7 +7,7 @@ Full fork details, upstream-merge process, and the no-CUDA rule: **[FORK.md](FOR
 
 ---
 
-## Everyday use — just run the app
+## Everyday use — install and run
 
 The packaged app needs none of the dev tooling below.
 
@@ -15,8 +15,42 @@ The packaged app needs none of the dev tooling below.
 D:\ClaudeCode\open-whispr\dist\OpenWhispr Setup 1.7.6.exe
 ```
 
-Unsigned, so SmartScreen warns on first run → **More info → Run anyway**.
-Enable **Settings → General → Startup → "Launch at login"** to have it always available.
+Per-user install (no admin), creates Desktop + Start Menu shortcuts. Unsigned, so
+SmartScreen warns on first run → **More info → Run anyway**.
+There's also a portable build: `dist\OpenWhispr 1.7.6.exe`.
+
+### Installed app ≠ dev app (separate profiles, shared models)
+
+| | Dev (`npm`) | Installed |
+|---|---|---|
+| Settings / localStorage | `%APPDATA%\OpenWhispr-development` | `%APPDATA%\OpenWhispr` |
+| Encrypted secrets | per-profile | per-profile |
+| **Models** | `~/.cache/openwhispr/` — **shared** | same |
+
+Two consequences:
+
+- **No re-download.** Parakeet weights (`parakeet-models/`, 1.3GB) and the GGUF
+  cleanup models (`models/`, 7GB) live outside userData, so the installed app finds
+  them immediately.
+- **A fresh profile is a feature here.** Empty localStorage means the `// [fork]`
+  defaults finally bind on their own: `transcriptionMode: local`,
+  `parakeetModel: parakeet-unified-en-0.6b`, `cleanupProvider: local`,
+  `cleanupModel: llama-3.2-3b-instruct-q4_k_m`. The dev profile is pinned to the
+  slower 5GB `gemma-4-e4b` because its localStorage was written before those
+  defaults existed — the installed app gets the faster model automatically.
+
+Expect to click through onboarding once and re-set the hotkey (`Ctrl+Win`).
+
+### Launch at login
+
+**Settings → General → Startup → "Launch at login"** — calls
+`app.setLoginItemSettings({openAtLogin, openAsHidden: true})`
+(`src/helpers/ipcHandlers.js:2841`).
+
+> ⚠️ **`openAsHidden` is macOS-only.** Windows ignores it, so despite the code
+> comment ("Start minimized to tray") the panel will likely appear at login rather
+> than starting silently. Usually fine for a dictation overlay. The Windows-correct
+> fix is `args: ['--hidden']` plus handling that flag at startup — not implemented.
 
 ---
 
