@@ -14,8 +14,9 @@
 - Flipped defaults to a fully-local pipeline (see Decisions) — **nothing touches the network**
 - Verified: 420ms transcription, 1169ms round-trip on 4.9s audio, CPU-only
 - Built Windows installer: `dist/OpenWhispr Setup 1.7.6.exe` (234MB) + portable
-- Wrote `FORK.md`, `QUICKSTART.md`, launcher routines, targeted stop script
-- Committed + pushed `2cd9742c` to `origin/main`
+- Wrote `FORK.md`, `QUICKSTART.md`, targeted stop script
+- Registered 3 `Whispr:` routines + a `Whispr` group in the Command Centre launcher
+- Committed + pushed `2cd9742c` + `a3e3ba38` to `origin/main`
 
 ## Files created or modified
 - `src/stores/settingsStore.ts` — 6 default changes, each tagged `// [fork]`
@@ -26,10 +27,12 @@
 - `.claude/launch.json` — **new**, 3 `Whispr:` routines (force-added; `.claude/` is gitignored)
 - `D:\ClaudeCode\PROJECTS.md` — row under *Python / Desktop Tools*
 - `D:\ClaudeCode\docs\TECHNIQUES.md` — 3 entries
+- `D:\ClaudeCode\launcher\routines.json` — **57 → 60**; ids `whispr-renderer`, `whispr-app`, `whispr-stop` (category `AI`)
+- `D:\ClaudeCode\launcher\groups.json` — `Whispr` group (id `whispr`) referencing those 3. Gitignored user-state, so it lives on this machine only. Written with Paul's explicit approval.
 
 ## Open questions / blockers
-- **`launcher/routines.json` NOT yet written** — 3 rows proposed + approved-pending. Paul asked "anything else to do?" but never said go. Rows are in the session transcript; re-propose before writing.
-- **Grouping incomplete** — `routines.json` has no group field. Grouping lives in `groups.json`, which is **user-owned + gitignored — do not edit**. Routines are prefixed `Whispr:` so they sort together; Paul must create the "Whispr" group in the Command Centre UI.
+- **`launcher/routines.json` is modified but UNCOMMITTED.** The `launcher` repo also has unrelated in-flight work from another session — `server/main.py`, `web/app.js`, `web/index.html`, `web/style.css`, untracked `server/skills.py`. **Commit `routines.json` alone**; do not sweep the rest in. Paul hasn't decided yet.
+- `launcher/routines.json.bak` + `launcher/groups.json.bak` left as safety copies — delete once the Command Centre renders the Whispr group correctly.
 - Cleanup model **actually active is `gemma-4-e4b` (5GB, 746ms)**, not the configured `llama-3.2-3b`. localStorage beats defaults. Switching may get round-trip under 1s — untested.
 - History panel never spot-checked (upstream SQLite `transcriptions` table).
 
@@ -42,10 +45,13 @@
 - **No version/CHANGELOG bump** — version tracks upstream; bumping would conflict on the files upstream churns most.
 
 ## Next steps (pick up here)
-1. Re-propose and write the 3 `whispr-*` rows into `D:\ClaudeCode\launcher\routines.json` (category `AI`), then offer to commit to `MadeITinCanada/launcher`.
-2. Switch cleanup model to `llama-3.2-3b-instruct-q4_k_m` in Settings → AI Models → Language Models; measure round-trip vs the 1169ms / 746ms baseline.
-3. Spot-check the history panel lists past dictations.
-4. Consider disabling the auto-started `llama-server` if the local cleanup model is ever turned off — it holds RAM/CPU for nothing.
+1. **Verify the launcher.** Open the Command Centre, confirm the `Whispr` group shows all 3 routines and that "Whispr: Renderer (Vite)" then "Whispr: App (Electron)" actually launch the app. Then delete the two `.bak` files.
+2. **Commit the registry** — `cd D:\ClaudeCode\launcher && git add routines.json && git commit` (that file ONLY — see blockers).
+3. Switch cleanup model to `llama-3.2-3b-instruct-q4_k_m` in Settings → AI Models → Language Models; measure round-trip vs the 1169ms / 746ms baseline.
+4. Spot-check the history panel lists past dictations.
+5. Consider disabling the auto-started `llama-server` if local cleanup is ever turned off — it holds RAM/CPU for nothing.
+
+**Nothing is broken.** The app works, is installed, is documented, and is pushed. Everything above is polish.
 
 ## Context to reload
 - **NO CUDA, EVER.** AMD Radeon 780M integrated only. Never set `WHISPER_CUDA_ENABLED`/`WHISPER_VULKAN_ENABLED`, never download GPU whisper variants. Parakeet has no GPU path by construction.
