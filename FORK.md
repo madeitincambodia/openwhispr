@@ -133,6 +133,15 @@ If those break, the path silently reverts to ffmpeg and the regression returns.
 worklet or `processWithLocalParakeet`, re-derive the bypass rather than force-resolving —
 the contract that matters is only "hand `_ensureWav` a 16 kHz mono WAV".
 
+### No version or CHANGELOG bumps in this fork
+
+`CHANGELOG.md` and `package.json` version **track upstream** and are deliberately left
+alone, even when fork commits ship real changes. Both are among the files upstream churns
+hardest, so bumping them buys nothing and costs a conflict on every `git merge
+upstream/main`. Fork history lives in git log and in this file. (Overrides the usual
+"bump the version + CHANGELOG in the same commit" house rule — noted here because that
+rule is otherwise automatic.)
+
 ### Defaults only bind a fresh profile
 
 Every one of these reads `localStorage` first (`readString`/`readBoolean`). If this

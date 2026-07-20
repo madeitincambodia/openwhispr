@@ -1,7 +1,11 @@
 # OpenWhispr — Quickstart
 
-Push-to-talk dictation, fully on-device. Hold **`Ctrl+Win`**, speak, release → cleaned
-text is pasted at your cursor. Nothing touches the network.
+Push-to-talk dictation, fully on-device. Hold the hotkey (**`F8`**), speak, release →
+text is pasted at your cursor in about a second. Nothing touches the network.
+
+> ⚠️ **Never pick an Alt key as the hotkey.** Releasing Alt activates the Windows menu
+> bar, which swallows the paste — the text lands in the clipboard and nowhere else, with
+> no error anywhere. `F8` and `Ctrl+Win` are both fine. See FORK.md.
 
 Full fork details, upstream-merge process, and the no-CUDA rule: **[FORK.md](FORK.md)**.
 
@@ -34,12 +38,13 @@ Two consequences:
   them immediately.
 - **A fresh profile is a feature here.** Empty localStorage means the `// [fork]`
   defaults finally bind on their own: `transcriptionMode: local`,
-  `parakeetModel: parakeet-unified-en-0.6b`, `cleanupProvider: local`,
-  `cleanupModel: llama-3.2-3b-instruct-q4_k_m`. The dev profile is pinned to the
-  slower 5GB `gemma-4-e4b` because its localStorage was written before those
-  defaults existed — the installed app gets the faster model automatically.
+  `parakeetModel: parakeet-unified-en-0.6b`, and `useCleanupModel: false`.
+- **LLM cleanup is off by default** (2026-07-20). It cost ~5.3s per dictation because
+  llama-server unloads the model after 5 idle minutes and only pre-warms at app start,
+  so most dictations paid a full cold load. Parakeet already punctuates and capitalises
+  well. Re-enable in Settings → AI Models if you want it; expect the latency back.
 
-Expect to click through onboarding once and re-set the hotkey (`Ctrl+Win`).
+Expect to click through onboarding once and set the hotkey to `F8` (not an Alt key).
 
 ### Launch at login
 
@@ -104,7 +109,7 @@ kill or when a dev process is stranded.
   download `parakeet-unified-en-0.6b` (~624MB).
 - No C++ compiler needed — native binaries download as prebuilts.
 - `.env` at the project root (git-ignored). `ANTHROPIC_API_KEY` is present but **unused**
-  (cleanup is local).
+  (cleanup is off by default, and local if re-enabled).
 
 ## Building
 

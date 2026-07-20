@@ -7,16 +7,21 @@
 >
 > Non-negotiables (full rationale in `FORK.md`):
 > - **No CUDA, ever.** Target machine is AMD Radeon 780M integrated — no NVIDIA GPU.
->   Never set `WHISPER_CUDA_ENABLED`/`WHISPER_VULKAN_ENABLED` or download GPU binaries.
+>   Never set `WHISPER_CUDA_ENABLED` or download CUDA binaries. **Vulkan is NOT banned** —
+>   it is vendor-neutral and is the correct 780M path; both profiles run it enabled.
 > - **Transcription stays on-device.** Defaults are Parakeet (sherpa-onnx, CPU/INT8);
 >   upstream's cloud-OpenAI default would send audio off the machine.
-> - **Anthropic is the only cleanup provider**, `claude-haiku-4-5`, BYOK direct —
->   *not* upstream's hosted-`openwhispr` cleanup route.
+> - **LLM cleanup is OFF by default** (`useCleanupModel: false`) — it cost ~5.3s per
+>   dictation. If re-enabled it stays local; nothing routes through upstream's hosted
+>   `openwhispr` cleanup, and the Anthropic key in `.env` is unused.
 > - **Never print a credential value** in any tool output.
 >
-> Fork divergence is defaults-only, in `src/stores/settingsStore.ts`, tagged `// [fork]`.
+> Fork divergence is defaults-only in `src/stores/settingsStore.ts` (tagged `// [fork]`),
+> **plus one code change**: the ffmpeg bypass on the offline-Parakeet dictation path
+> (`audioManager.js` + `parakeet.js`). See FORK.md before touching either.
 > Note: **`npm run dev` is broken here** (a `concurrently` cwd bug) — `FORK.md` has the
-> workaround.
+> workaround. **Windows: never use an Alt key as the dictation hotkey** — it silently
+> eats the paste (F8 confirmed working).
 >
 > Everything below this line is upstream's own reference. Keep it that way so
 > `git merge upstream/main` stays clean.
